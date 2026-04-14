@@ -11,6 +11,82 @@ from typing import Dict, Any, Optional, List
 from state.session import show_toast
 
 
+def _get_enriched_rg_rules(state: Any) -> Optional[pd.DataFrame]:
+    """Return Rule Generator rules dataframe with regex enrichment, or None."""
+    from features.rule_generator.engine import enrich_dataframe_regex_patterns
+
+    df = getattr(state, "ai_validation_rules", None)
+    if df is None or df.empty:
+        return None
+    return enrich_dataframe_regex_patterns(df.copy())
+
+
+def _rg_row_to_applied_rule(row: pd.Series) -> Optional[Dict[str, Any]]:
+    """Map a Rule Generator rule row to a Data Quality ``applied_rules`` entry.
+
+    Args:
+        row: One row from the enriched Rule Generator dataframe.
+
+    Returns:
+        A rule dict for ``dq_config`` or None if the rule cannot be executed in this tab.
+    """
+    from features.rule_generator.engine import _extract_max_chars
+
+    pat = str(row.get("Regex Pattern", "") or "").strip()
+    dim = str(row.get("Dimension", "") or "")
+    dq = str(row.get("Data Quality Rule", "") or "")
+    dl = dq.lower()
+    ts = datetime.now().strftime("%H:%M:%S")
+
+    def _base(**overrides: Any) -> Dict[str, Any]:
+        base: Dict[str, Any] = {
+            "replace": "",
+            "case": "UPPERCASE",
+            "length_mode": "Exact",
+            "min_length": 0,
+            "max_length": 50,
+            "exact_length": 10,
+            "timestamp": ts,
+        }
+        base.update(overrides)
+        return base
+
+    if pat:
+        return _base(
+            name=f"RG · {dim}: {dq[:48]}",
+            mode="Validate",
+            pattern=pat,
+        )
+
+    if dim == "Conformity" and ("uppercase" in dl or "upper case" in dl):
+        return _base(
+            name=f"RG · Case: {dq[:48]}",
+            mode="Case",
+            pattern="",
+            case="UPPERCASE",
+        )
+
+    if dim == "Conformity" and ("lowercase" in dl or "lower case" in dl):
+        return _base(
+            name=f"RG · Case: {dq[:48]}",
+            mode="Case",
+            pattern="",
+            case="lowercase",
+        )
+
+    mc = _extract_max_chars(dq)
+    if dim == "Character Length" and mc is not None:
+        return _base(
+            name=f"RG · Length ≤ {mc}",
+            mode="Length",
+            pattern="",
+            length_mode="Maximum",
+            max_length=int(mc),
+        )
+
+    return None
+
+
 def render_data_quality():
     """Enhanced table with top AI assistant and actions"""
     
@@ -40,7 +116,16 @@ def render_data_quality():
     """, unsafe_allow_html=True)
     
     st.markdown("## Data Quality")
-    
+
+    columns = state.df.columns.tolist()
+
+    rg_avail = _get_enriched_rg_rules(state)
+    if getattr(state, "ai_validation_rules_generated", False) and rg_avail is not None and not rg_avail.empty:
+        st.info(
+            "**Rule Generator** rules are available. On each column row, open **RG** to pick generated "
+            "rules, then **Save** and **Run** — or use **Apply** in the toolbar after saving rules per column."
+        )
+
     # Initialize
     if 'reject_df' not in st.session_state:
         st.session_state.reject_df = pd.DataFrame()
@@ -66,7 +151,6 @@ def render_data_quality():
         with st.popover("AI Regex", use_container_width=True):
             st.markdown("**AI Regex Generator**")
             
-            columns = state.df.columns.tolist()
             selected_col = st.selectbox("Column:", columns, key="ai_col")
             
             ai_q = st.text_area(
@@ -271,51 +355,105 @@ def render_data_quality():
         with row_cols[2]:
             st.caption(sample_str)
         
-        # Column 3: Rules popover with edit/delete
+        # Column 3: Rules popover with edit/delete + Rule Generator link
         with row_cols[3]:
-            rule_count = len(config['applied_rules'])
-            if rule_count > 0:
-                with st.popover(f"{rule_count} rules", use_container_width=True):
-                    st.markdown(f"**Rules ({rule_count})**")
-                    for rule_idx, rule in enumerate(config['applied_rules']):
-                        st.markdown(f"**{rule_idx + 1}. {rule['name']}**")
-                        st.caption(f"Mode: {rule['mode']}")
-                        if rule.get('pattern'):
-                            st.caption(f"Pattern: {rule['pattern']}")
-                        if rule.get('replace'):
-                            st.caption(f"Replace: {rule['replace']}")
-                        if rule['mode'] == 'Case':
-                            st.caption(f"Case: {rule['case']}")
-                        if rule['mode'] == 'Length':
-                            st.caption(f"Length: {rule['length_mode']}")
-                        st.caption(f"{rule['timestamp']}")
-                        
-                        col_a, col_b = st.columns(2)
-                        with col_a:
-                            if st.button("Edit", key=f"edit_{idx}_{rule_idx}", use_container_width=True):
-                                # Load rule into config for editing
-                                config['mode'] = rule['mode']
-                                config['pattern'] = rule.get('pattern', '')
-                                config['replace'] = rule.get('replace', '')
-                                config['case'] = rule.get('case', 'UPPERCASE')
-                                config['length_mode'] = rule.get('length_mode', 'Exact')
-                                config['min_length'] = rule.get('min_length', 0)
-                                config['max_length'] = rule.get('max_length', 50)
-                                config['exact_length'] = rule.get('exact_length', 10)
-                                # Remove from list
-                                config['applied_rules'].pop(rule_idx)
-                                show_toast(f"Editing: {rule['name']}", "info")
+            r3a, r3b = st.columns(2)
+            with r3a:
+                rule_count = len(config['applied_rules'])
+                if rule_count > 0:
+                    with st.popover(f"{rule_count} rules", use_container_width=True):
+                        st.markdown(f"**Rules ({rule_count})**")
+                        for rule_idx, rule in enumerate(config['applied_rules']):
+                            st.markdown(f"**{rule_idx + 1}. {rule['name']}**")
+                            st.caption(f"Mode: {rule['mode']}")
+                            if rule.get('pattern'):
+                                st.caption(f"Pattern: {rule['pattern']}")
+                            if rule.get('replace'):
+                                st.caption(f"Replace: {rule['replace']}")
+                            if rule['mode'] == 'Case':
+                                st.caption(f"Case: {rule['case']}")
+                            if rule['mode'] == 'Length':
+                                st.caption(f"Length: {rule['length_mode']}")
+                            st.caption(f"{rule['timestamp']}")
+                            
+                            col_a, col_b = st.columns(2)
+                            with col_a:
+                                if st.button("Edit", key=f"edit_{idx}_{rule_idx}", use_container_width=True):
+                                    # Load rule into config for editing
+                                    config['mode'] = rule['mode']
+                                    config['pattern'] = rule.get('pattern', '')
+                                    config['replace'] = rule.get('replace', '')
+                                    config['case'] = rule.get('case', 'UPPERCASE')
+                                    config['length_mode'] = rule.get('length_mode', 'Exact')
+                                    config['min_length'] = rule.get('min_length', 0)
+                                    config['max_length'] = rule.get('max_length', 50)
+                                    config['exact_length'] = rule.get('exact_length', 10)
+                                    # Remove from list
+                                    config['applied_rules'].pop(rule_idx)
+                                    show_toast(f"Editing: {rule['name']}", "info")
+                                    st.rerun()
+                            with col_b:
+                                if st.button("Del", key=f"del_{idx}_{rule_idx}", use_container_width=True):
+                                    config['applied_rules'].pop(rule_idx)
+                                    show_toast(f"Deleted: {rule['name']}", "info")
+                                    st.rerun()
+                            
+                            if rule_idx < len(config['applied_rules']) - 1:
+                                st.divider()
+                else:
+                    st.caption("No rules")
+
+            with r3b:
+                rg_full = _get_enriched_rg_rules(state)
+                sub = (
+                    rg_full[rg_full["Column"] == col_name]
+                    if rg_full is not None and not rg_full.empty
+                    else pd.DataFrame()
+                )
+                with st.popover("RG", use_container_width=True):
+                    st.markdown("**From Rule Generator**")
+                    if not getattr(state, "ai_validation_rules_generated", False):
+                        st.caption("Generate rules in the **Rule Generator** tab first.")
+                    elif rg_full is None or rg_full.empty:
+                        st.caption("No Rule Generator rules in session.")
+                    elif sub.empty:
+                        st.caption("No generated rules target this column name.")
+                    else:
+                        options: List[tuple[str, Dict[str, Any]]] = []
+                        for _, r in sub.iterrows():
+                            applied = _rg_row_to_applied_rule(r)
+                            if applied is None:
+                                continue
+                            short = str(r.get("Data Quality Rule", ""))[:40]
+                            if len(str(r.get("Data Quality Rule", ""))) > 40:
+                                short += "…"
+                            lbl = f"{int(r['S.No'])} · {r['Dimension']} · {short}"
+                            options.append((lbl, applied))
+                        if not options:
+                            st.caption(
+                                "No executable rules for this column (e.g. uniqueness cannot map to regex here)."
+                            )
+                        else:
+                            labels = [o[0] for o in options]
+                            label_to_rule = {o[0]: o[1] for o in options}
+                            picked = st.multiselect(
+                                "Choose rules to queue",
+                                labels,
+                                key=f"rg_sel_{idx}",
+                            )
+                            if st.button(
+                                "Add selected",
+                                key=f"rg_add_{idx}",
+                                use_container_width=True,
+                                type="primary",
+                            ):
+                                for lbl in picked:
+                                    config["applied_rules"].append(label_to_rule[lbl])
+                                show_toast(
+                                    f"Added {len(picked)} Rule Generator rule(s) for **{col_name}**",
+                                    "success",
+                                )
                                 st.rerun()
-                        with col_b:
-                            if st.button("Del", key=f"del_{idx}_{rule_idx}", use_container_width=True):
-                                config['applied_rules'].pop(rule_idx)
-                                show_toast(f"Deleted: {rule['name']}", "info")
-                                st.rerun()
-                        
-                        if rule_idx < len(config['applied_rules']) - 1:
-                            st.divider()
-            else:
-                st.caption("No rules")
         
         # Column 4: Mode (increased width)
         with row_cols[4]:

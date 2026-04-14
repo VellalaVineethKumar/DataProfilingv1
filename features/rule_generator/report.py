@@ -1,5 +1,6 @@
 """DQ Rule Report Generator - PDF generation for business users"""
 
+import html
 import io
 import base64
 from datetime import datetime
@@ -47,6 +48,10 @@ def generate_dq_rule_report_html(validation_df, filename, total_rows):
     for _, row in validation_df.iterrows():
         issues = row.get('Issues Found', 0)
         issue_style = "color: #dc2626; font-weight: bold;" if issues > 0 else "color: #16a34a;"
+        regex_pat = row.get('Regex Pattern', '')
+        if pd.isna(regex_pat):
+            regex_pat = ''
+        regex_html = html.escape(str(regex_pat), quote=True)
         
         rows_html += f"""
         <tr>
@@ -54,6 +59,7 @@ def generate_dq_rule_report_html(validation_df, filename, total_rows):
             <td>{row.get('Column', '')}</td>
             <td><span class="badge dim-{row.get('Dimension', 'Validity').lower()}">{row.get('Dimension', 'Validity')}</span></td>
             <td>{row.get('Data Quality Rule', '')}</td>
+            <td style="font-family: monospace; font-size: 0.75rem;">{regex_html}</td>
             <td style="{issue_style}">{issues}</td>
             <td style="font-size: 0.75rem; color: #475569;">{row.get('Issues Found Example', '')}</td>
         </tr>
@@ -221,12 +227,13 @@ def generate_dq_rule_report_html(validation_df, filename, total_rows):
         <table>
             <thead>
                 <tr>
-                    <th style="width: 5%;">S.No</th>
-                    <th style="width: 15%;">Column</th>
-                    <th style="width: 10%;">Dimension</th>
-                    <th style="width: 35%;">Data Quality Rule</th>
-                    <th style="width: 10%;">Issues</th>
-                    <th style="width: 25%;">Example of Issue</th>
+                    <th style="width: 4%;">S.No</th>
+                    <th style="width: 12%;">Column</th>
+                    <th style="width: 8%;">Dimension</th>
+                    <th style="width: 28%;">Data Quality Rule</th>
+                    <th style="width: 18%;">Regex Pattern</th>
+                    <th style="width: 8%;">Issues</th>
+                    <th style="width: 22%;">Example of Issue</th>
                 </tr>
             </thead>
             <tbody>

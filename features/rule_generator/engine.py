@@ -170,6 +170,22 @@ def deep_scan_rule_sheet(uploaded_file_path: str, sheet_name: str, header_row: i
         return {}
 
 
+def _ensure_regex_pattern(rule: Dict[str, Any], metadata: Dict[str, Any]) -> None:
+    """Populate ``regex_pattern`` when absent and metadata supports a concrete pattern.
+
+    Args:
+        rule: A single rule dict from the AI response (mutated in place).
+        metadata: Column metadata from :func:`extract_comprehensive_metadata`.
+    """
+    existing = str(rule.get("regex_pattern") or "").strip()
+    if existing:
+        return
+    dim = rule.get("dimension", "")
+    if dim == "Character Length" and metadata.get("max_length") is not None:
+        n = int(metadata["max_length"])
+        rule["regex_pattern"] = f"^.{0,{n}}$"
+
+
 def post_process_rules(rules: List[Dict[str, Any]], metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Post-process generated rules to ensure correct dimension mapping and formatting
     
@@ -178,6 +194,7 @@ def post_process_rules(rules: List[Dict[str, Any]], metadata: Dict[str, Any]) ->
     2. Ensure human-readable formatting for length constraints
     3. Ensure Completeness rules exist for mandatory fields
     4. Ensure separate line items for each dimension
+    5. Fill ``regex_pattern`` when inferable from metadata
     """
     processed_rules = []
     has_completeness_rule = False
@@ -212,6 +229,7 @@ def post_process_rules(rules: List[Dict[str, Any]], metadata: Dict[str, Any]) ->
                 field_name = rule.get('business_field', '')
                 rule['data_quality_rule'] = f"{field_name} must not be blank"
         
+        _ensure_regex_pattern(rule, metadata)
         processed_rules.append(rule)
     
     # Ensure Completeness rule exists for mandatory fields
@@ -222,19 +240,22 @@ def post_process_rules(rules: List[Dict[str, Any]], metadata: Dict[str, Any]) ->
             'dimension': 'Completeness',
             'data_quality_rule': f"{field_name} must not be blank",
             'issues_found': 0,
-            'issues_found_example': 'All values valid - No issues found'
+            'issues_found_example': 'All values valid - No issues found',
+            'regex_pattern': '',
         }
         processed_rules.append(completeness_rule)
     
     # Ensure Character Length rule exists if max_length is detected
     if metadata.get('max_length') and not has_character_length_rule:
         field_name = processed_rules[0].get('business_field', '') if processed_rules else ''
+        n = int(metadata['max_length'])
         char_length_rule = {
             'business_field': field_name,
             'dimension': 'Character Length',
             'data_quality_rule': f"{field_name} should be maximum {metadata['max_length']} characters",
             'issues_found': 0,
-            'issues_found_example': 'All values valid - No issues found'
+            'issues_found_example': 'All values valid - No issues found',
+            'regex_pattern': f'^.{0,{n}}$',
         }
         processed_rules.append(char_length_rule)
     
@@ -608,7 +629,10 @@ Examples:
 
 === OUTPUT FORMAT (STRICT JSON) ===
 
-Return an array of rule objects (one per dimension), wrapped in a "rules" key:
+Return an array of rule objects (one per dimension), wrapped in a "rules" key.
+Each rule MUST include "regex_pattern": a Python-style regular expression that
+implements the check when applicable (e.g. "^.{{0,30}}$" for max 30 characters,
+"^-?\\d+(\\.\\d+)?$" for numeric), or "" when no single regex applies.
 
 {{
   "rules": [
@@ -616,6 +640,7 @@ Return an array of rule objects (one per dimension), wrapped in a "rules" key:
       "business_field": "{column_name}",
       "dimension": "Character Length",
       "data_quality_rule": "{column_name} should be maximum X characters",
+      "regex_pattern": "^.{{0,X}}$",
       "issues_found": 0,
       "issues_found_example": "All values valid - No issues found"
     }},
@@ -623,6 +648,7 @@ Return an array of rule objects (one per dimension), wrapped in a "rules" key:
       "business_field": "{column_name}",
       "dimension": "Completeness",
       "data_quality_rule": "{column_name} must not be blank",
+      "regex_pattern": "",
       "issues_found": 0,
       "issues_found_example": "All values valid - No issues found"
     }}
@@ -969,6 +995,107 @@ def _format_examples(series: pd.Series, limit: int = 5) -> str:
     if remaining > 0:
         result += f" ... and {remaining} more"
     return result
+
+
+def infer_regex_pattern_from_rule(dimension: str, rule_text: str) -> str:
+    """Derive a best-effort Python ``re`` pattern from a rule statement.
+
+    Returns an empty string when no reasonable single-cell pattern exists (e.g. uniqueness).
+
+    Args:
+        dimension: DQ dimension for the rule row.
+        rule_text: Human-readable ``Data Quality Rule`` text.
+
+    Returns:
+        A regex string, or ``""`` if none applies.
+    """
+    if not rule_text or not str(rule_text).strip():
+        return ""
+    rt = str(rule_text).strip()
+    rl = rt.lower()
+    dim = (dimension or "").strip()
+
+    if dim in ("Uniqueness", "Relevance"):
+        return ""
+
+    allowed = _extract_allowed_values(rt)
+    if allowed:
+        inner = "|".join(re.escape(v) for v in allowed)
+        return f"(?i)^({inner})$"
+
+    if (
+        dim == "Completeness"
+        or "must not be blank" in rl
+        or "cannot be null" in rl
+        or "not be null" in rl
+    ):
+        return r"^(?=.*\S).*$"
+
+    if (
+        "must be numeric" in rl
+        or "must be a numeric" in rl
+        or "must be an integer" in rl
+        or re.search(r"\bmust be (a )?whole number\b", rl)
+    ):
+        return r"^-?\d+(\.\d+)?$"
+
+    if dim == "Conformity":
+        if "uppercase" in rl or "upper case" in rl or "all caps" in rl:
+            return r"^[^a-z]*$"
+        if "lowercase" in rl or "lower case" in rl:
+            return r"^[^A-Z]*$"
+        if "alphanumeric" in rl and "no special" not in rl:
+            return r"^[A-Za-z0-9\s]+$"
+        if "no special character" in rl:
+            return r"^[A-Za-z0-9\s\-_.]+$"
+
+    mc = _extract_max_chars(rt)
+    if mc is not None:
+        return rf"^.{0,{mc}}$"
+
+    if "valid string" in rl or "valid string format" in rl:
+        return r"^(?=.*\S).*$"
+
+    if "email" in rl and "format" in rl:
+        return r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"
+
+    if re.search(r"\bdd-mm-yyyy\b", rl, re.IGNORECASE):
+        return r"^\d{2}-\d{2}-\d{4}$"
+    if re.search(r"\byyyy-mm-dd\b", rl, re.IGNORECASE):
+        return r"^\d{4}-\d{2}-\d{2}$"
+    if re.search(r"\bmm/dd/yyyy\b", rl, re.IGNORECASE):
+        return r"^\d{2}/\d{2}/\d{4}$"
+
+    if re.search(
+        r"(in uppercase|uppercase format|must be uppercase)\b", rl
+    ) and "not uppercase" not in rl:
+        return r"^[^a-z]*$"
+
+    return ""
+
+
+def enrich_dataframe_regex_patterns(df: pd.DataFrame) -> pd.DataFrame:
+    """Fill empty ``Regex Pattern`` cells using :func:`infer_regex_pattern_from_rule`.
+
+    Args:
+        df: Rules dataframe with ``Dimension`` and ``Data Quality Rule`` columns.
+
+    Returns:
+        A copy of *df* with inferred patterns where the pattern was blank.
+    """
+    out = df.copy()
+    if "Regex Pattern" not in out.columns:
+        out["Regex Pattern"] = ""
+    for idx in out.index:
+        cur = out.at[idx, "Regex Pattern"]
+        if pd.notna(cur) and str(cur).strip() != "":
+            continue
+        dim = str(out.at[idx, "Dimension"])
+        rule = str(out.at[idx, "Data Quality Rule"])
+        inferred = infer_regex_pattern_from_rule(dim, rule)
+        if inferred:
+            out.at[idx, "Regex Pattern"] = inferred
+    return out
 
 
 def validate_rule(df: pd.DataFrame, column: str, dimension: str, rule_text: str) -> Tuple[int, str]:
