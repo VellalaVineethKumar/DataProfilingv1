@@ -17,17 +17,20 @@ pydantic
 xhtml2pdf
 
 # Database drivers
-psycopg2-binary
 pymysql
 pyodbc
 oracledb
 ibm_db_sa
 snowflake-sqlalchemy
 sqlalchemy-bigquery
-sqlalchemy-redshift
 sqlalchemy-cockroachdb
 duckdb-engine
 teradatasqlalchemy
 hdbcli
 sqlalchemy-hana
 pyhive
+# Pin redshift to a version that uses psycopg2-binary, not psycopg2
+sqlalchemy-redshift>=0.8.14
+
+# Explicitly pin binary variant so nothing resolves to source psycopg2
+psycopg2-binary>=2.9.9
