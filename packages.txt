@@ -1,0 +1,5 @@
+libpq-dev
+libcairo2-dev
+pkg-config
+python3-dev
+libpangocairo-1.0-0
