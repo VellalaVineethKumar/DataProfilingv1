@@ -1,0 +1,24 @@
+{
+  "users": [
+    {
+      "username": "admin",
+      "password": "cc0945fad038e4c7daaf475e11a75682217b63435d85e3426fa338626df56615",
+      "name": "Administrator"
+    },
+    {
+      "username": "krishna",
+      "password": "daf3dfccd2b0292b498833d3ea53a2e5f7bb8d6d64ba678423fb1bd5cf5d6d47",
+      "name": "Krishna Kumar"
+    },
+    {
+      "username": "Manoj",
+      "password": "c7fe96a5f1974e3d036e73549360912109b4ca1e056aaa3ad03d3f3844a98101",
+      "name": "Manoj"
+    },
+    {
+      "username": "vineeth",
+      "password": "4bf9777e1c195cc0f4d04c1bb45a7d07a63664bc267c0cf97bd8c55ce0dca4fb",
+      "name": "Vineeth Kumar"
+    }
+  ]
+}

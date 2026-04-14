@@ -1,0 +1,27 @@
+# Secrets
+.streamlit/secrets.toml
+.env
+
+# Data and Logs
+*.log
+data/*.db
+Input/
+*.pptx
+*.xlsx
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+.cursor/
