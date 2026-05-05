@@ -3,6 +3,7 @@ import { lazy, Suspense, useMemo } from 'react';
 import { ThemeProvider, CssBaseline, Box, CircularProgress } from '@mui/material';
 import { useStore } from './store';
 import { buildTheme } from './theme';
+import ToastProvider from './components/ToastProvider';
 
 const Login = lazy(() => import('./pages/Login'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -15,6 +16,7 @@ export default function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
+      <ToastProvider />
       <Suspense
         fallback={
           <Box sx={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
