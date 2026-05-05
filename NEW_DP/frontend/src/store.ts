@@ -61,7 +61,7 @@ export const useStore = create<AppState>()(
         set((state) => ({ themeMode: state.themeMode === 'light' ? 'dark' : 'light' })),
       addToast: (toast) =>
         set((state) => ({
-          toasts: [...state.toasts, { ...toast, id: Date.now().toString() }],
+          toasts: [...state.toasts, { ...toast, id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}` }],
         })),
       removeToast: (id) =>
         set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) })),
