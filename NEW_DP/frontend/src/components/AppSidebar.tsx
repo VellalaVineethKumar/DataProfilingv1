@@ -141,9 +141,6 @@ export default function AppSidebar({ activeIndex, onNavigate, collapsed, onToggl
                 <Tooltip key={item.index} title={collapsed ? item.label : ''} placement="right">
                   <Box
                     onClick={() => onNavigate(item.index)}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onNavigate(item.index); } }}
                     sx={{
                       display: 'flex',
                       alignItems: 'center',

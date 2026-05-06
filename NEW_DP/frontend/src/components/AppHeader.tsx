@@ -82,10 +82,6 @@ export default function AppHeader({ title, breadcrumb, onNavigateToLoad }: AppHe
           <Tooltip title={user?.username ?? 'Account'}>
             <Box
               onClick={(e) => setAnchorEl(e.currentTarget)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setAnchorEl(e.currentTarget as HTMLElement); } }}
-              aria-label={`Account: ${user?.username ?? 'User'}`}
               sx={{
                 width: 32,
                 height: 32,

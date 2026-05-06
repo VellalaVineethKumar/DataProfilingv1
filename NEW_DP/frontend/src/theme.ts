@@ -11,10 +11,6 @@ export function buildTheme(mode: 'light' | 'dark'): Theme {
         dark: '#8f0002',
         contrastText: '#ffffff',
       },
-      secondary: {
-        main: '#6b7280',
-        contrastText: '#ffffff',
-      },
       background: {
         default: light ? '#f8f9fa' : '#0f1117',
         paper: light ? '#ffffff' : '#1a1d23',
@@ -27,7 +23,6 @@ export function buildTheme(mode: 'light' | 'dark'): Theme {
       success: { main: '#16a34a' },
       warning: { main: '#d97706' },
       error: { main: '#dc2626' },
-      info: { main: '#0ea5e9' },
     },
     typography: {
       fontFamily: '"Inter", "Roboto", "Helvetica", "Arial", sans-serif',
