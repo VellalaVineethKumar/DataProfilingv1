@@ -183,10 +183,10 @@ export default function HomeDashboard({ onNavigate }: HomeDashboardProps) {
       {/* KPI Cards */}
       {(() => {
         const stats = [
-          { label: 'Total Datasets', value: datasets.length, icon: <StorageIcon />, color: '#6366f1' },
-          { label: 'Total Projects', value: projects.length, icon: <ProjectIcon />, color: '#10b981' },
-          { label: 'Total Rows Analyzed', value: datasets.reduce((acc, d) => acc + (d.row_count || 0), 0).toLocaleString(), icon: <FileIcon />, color: '#3b82f6' },
-          { label: 'Rule Sets Created', value: '0', icon: <RuleIcon />, color: '#7c3aed' },
+          { label: 'Total Datasets', value: datasets.length, icon: <StorageIcon />, color: '#b60003' },
+          { label: 'Total Projects', value: projects.length, icon: <ProjectIcon />, color: '#b60003' },
+          { label: 'Total Rows Analyzed', value: datasets.reduce((acc, d) => acc + (d.row_count || 0), 0).toLocaleString(), icon: <FileIcon />, color: '#b60003' },
+          { label: 'Rule Sets Created', value: '0', icon: <RuleIcon />, color: '#b60003' },
         ];
         return (
           <Grid container spacing={3} sx={{ mb: 4 }}>
@@ -328,7 +328,7 @@ export default function HomeDashboard({ onNavigate }: HomeDashboardProps) {
         {/* Project Summaries */}
         <Grid item xs={12} lg={7}>
           <Typography variant="h6" fontWeight="bold" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>
-            <ProjectIcon sx={{ mr: 1, color: '#10b981' }} /> Active Projects
+            <ProjectIcon sx={{ mr: 1, color: '#b60003' }} /> Active Projects
           </Typography>
           <Grid container spacing={2}>
             {projects.map((proj) => (
@@ -353,7 +353,11 @@ export default function HomeDashboard({ onNavigate }: HomeDashboardProps) {
             ))}
             {projects.length === 0 && (
               <Grid item xs={12}>
-                <Alert severity="info">No projects created yet. Create one in the "Load Data" tab.</Alert>
+                <Box sx={{ py: 3, textAlign: 'center' }}>
+                  <Typography variant="body2" color="text.secondary">
+                    No projects yet. Create one from the Load Data page.
+                  </Typography>
+                </Box>
               </Grid>
             )}
           </Grid>
@@ -363,7 +367,7 @@ export default function HomeDashboard({ onNavigate }: HomeDashboardProps) {
         <Grid item xs={12} lg={5}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
             <Typography variant="h6" fontWeight="bold">Recent Datasets</Typography>
-            <Button variant="text" size="small">View All</Button>
+            <Button variant="text" size="small" sx={{ color: '#b60003' }}>View All</Button>
           </Box>
           <TableContainer component={Paper} elevation={1} sx={{ borderRadius: 2 }}>
             <Table size="small">

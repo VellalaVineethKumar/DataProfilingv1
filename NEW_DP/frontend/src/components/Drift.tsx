@@ -168,10 +168,12 @@ export default function Drift() {
               Save the current dataset state as a gold standard for future comparisons.
             </Typography>
 
-            <Box sx={{ p: 2, bgcolor: '#f8f9fa', borderRadius: 1, mb: 3 }}>
+            <Box sx={{ p: 2, bgcolor: 'action.hover', borderRadius: 1, mb: 3, border: '1px solid', borderColor: 'divider' }}>
               <Typography variant="caption" color="text.secondary">CURRENT DATASET</Typography>
               <Typography variant="body1" fontWeight={600}>{currentDataset.filename}</Typography>
-              <Typography variant="body2">{currentDataset.row_count?.toLocaleString()} rows</Typography>
+              <Typography variant="body2" color="text.secondary">
+                {currentDataset.row_count ? `${currentDataset.row_count.toLocaleString()} rows` : 'Row count pending'}
+              </Typography>
             </Box>
 
             <Box sx={{ display: 'flex', gap: 1 }}>

@@ -438,16 +438,17 @@ export default function DataQuality() {
             </Grid>
             
             <Grid item xs={12} md={5}>
-              <Box sx={{ p: 2, border: '1px solid #e2e8f0', borderRadius: 2, bgcolor: '#f0fdf4', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                <Typography variant="subtitle2" fontWeight="bold" color="#166534" gutterBottom>
+              <Box sx={{ p: 2, border: '1px solid #fecaca', borderRadius: 2, bgcolor: '#fef2f2', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                <Typography variant="subtitle2" fontWeight="bold" color="#b60003" gutterBottom>
                   Intelligent Auto-Fix
                 </Typography>
                 <Typography variant="caption" color="text.secondary" sx={{ mb: 2 }}>
                   One-click cleanup: Standardization, Deduplication, and Imputation.
                 </Typography>
-                <Button 
-                  fullWidth variant="contained" color="success" startIcon={<AutoFixHighIcon />}
+                <Button
+                  fullWidth variant="contained" startIcon={<AutoFixHighIcon />}
                   onClick={handleAutoFix} disabled={autoFixing}
+                  sx={{ bgcolor: '#b60003', '&:hover': { bgcolor: '#8f0002' } }}
                 >
                   {autoFixing ? 'Fixing...' : 'Run Auto-Fix'}
                 </Button>

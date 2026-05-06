@@ -11,6 +11,13 @@ export function buildTheme(mode: 'light' | 'dark'): Theme {
         dark: '#8f0002',
         contrastText: '#ffffff',
       },
+      secondary: {
+        main: '#6b7280',
+        contrastText: '#ffffff',
+      },
+      info: {
+        main: '#0ea5e9',
+      },
       background: {
         default: light ? '#f8f9fa' : '#0f1117',
         paper: light ? '#ffffff' : '#1a1d23',

@@ -3,7 +3,7 @@ import {
   Box, Typography, Paper, Button, Alert, CircularProgress, Chip,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Select, MenuItem, TextField, FormControl, InputLabel, Divider,
-  Grid, Card, CardContent, Drawer
+  Grid, Card, CardContent, Drawer, IconButton
 } from '@mui/material';
 import {
   AutoFixHigh as AutoFixIcon,
@@ -12,6 +12,7 @@ import {
   Numbers as NumbersIcon,
   TableRows as TableRowsIcon,
   Code as CodeIcon,
+  Close as CloseIcon,
 } from '@mui/icons-material';
 import client from '../api/client';
 import { useStore } from '../store';
@@ -248,9 +249,14 @@ export default function Transform() {
           if (!op) return null;
           return (
             <>
-              <Typography variant="h6" fontWeight={700} gutterBottom>
-                Configure Operation
-              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+                <Typography variant="h6" fontWeight={700}>
+                  Configure Operation
+                </Typography>
+                <IconButton size="small" onClick={() => setDrawerOpen(false)}>
+                  <CloseIcon fontSize="small" />
+                </IconButton>
+              </Box>
               <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 2 }}>
                 {op.label}
               </Typography>

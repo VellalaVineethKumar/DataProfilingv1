@@ -125,6 +125,14 @@ export default function Login() {
               value={password} onChange={(e) => setPassword(e.target.value)}
               size="small"
             />
+            {!isRegistering && (
+              <Box sx={{ textAlign: 'right', mt: 0.5 }}>
+                <Link component="button" type="button" variant="caption" color="primary" underline="hover"
+                  onClick={() => {}}>
+                  Forgot password?
+                </Link>
+              </Box>
+            )}
             <Button
               type="submit" fullWidth variant="contained"
               disabled={loading || !username || !password}

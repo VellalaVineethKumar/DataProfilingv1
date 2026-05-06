@@ -337,8 +337,8 @@ export default function Profiling() {
       {/* ====== Sub-Tab 0: Overview ====== */}
       {subTab === 0 && (
         <Box>
-          <Typography variant="h6" fontWeight="bold" gutterBottom sx={{ color: '#1e40af', letterSpacing: 1 }}>
-            DATA COMPLETENESS ANALYSIS
+          <Typography variant="h6" fontWeight={600} gutterBottom>
+            Data Completeness Analysis
           </Typography>
 
           <Grid container spacing={3} sx={{ mb: 4 }}>
