@@ -13,6 +13,13 @@ export interface Rule {
   min_length: number;
   max_length: number;
   exact_length: number;
+  /**
+   * Optional human-readable label. When present, summarizeRule() prefers this
+   * over its preset/regex-based fallback. We populate it for AI-suggested rules
+   * so the user sees the AI's own explanation instead of a generic "Custom regex".
+   * Frontend-only field — backend ignores it (extra fields are dropped by Pydantic).
+   */
+  note?: string;
 }
 
 export type RuleKind = 'transform' | 'validate' | 'format' | 'length';
@@ -367,6 +374,9 @@ export const KIND_META: Record<RuleKind, { label: string; tagline: string; color
 
 /** Map a stored Rule back to a friendly summary line. */
 export function summarizeRule(rule: Rule): string {
+  // 0) AI-generated or manually-noted rules carry their own friendly label.
+  if (rule.note && rule.note.trim()) return rule.note.trim();
+
   // 1) Try to find the preset that built this rule.
   const matches = RULE_PRESETS.filter((p) => {
     const built = p.build({});

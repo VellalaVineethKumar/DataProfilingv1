@@ -337,6 +337,9 @@ export default function DataQuality() {
         min_length: suggestion.min_length || 0,
         max_length: suggestion.max_length || 50,
         exact_length: suggestion.exact_length || 10,
+        // Use the AI's own explanation as the chip label so the user sees
+        // "Remove leading zeros from numeric IDs" instead of "Custom regex…".
+        note: suggestion.explanation || undefined,
       };
 
       setRulesConfig({
@@ -470,24 +473,42 @@ export default function DataQuality() {
                 You can use the tools in any order, but this is the fastest path from messy data to a clean export.
               </Typography>
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
-                <WorkflowStep
-                  num={1}
-                  title="Quick clean"
-                  body="Run Auto-Fix to handle duplicates, missing values, and column names. You preview every change before committing."
-                  active={subTab === 0}
-                />
-                <WorkflowStep
-                  num={2}
-                  title="Column rules"
-                  body="Pick from plain-English presets per column — validate format, transform values, check length."
-                  active={subTab === 0 && totalRulesCount > 0}
-                />
-                <WorkflowStep
-                  num={3}
-                  title="Review & export"
-                  body="Run rules, inspect Cleaned vs. Rejected rows, then download the CSVs."
-                  active={subTab === 2}
-                />
+                {(() => {
+                  // Real progress state, then derive which step the user is "currently on"
+                  const step1Done = snapshotAvailable;
+                  const step2Done = totalRulesCount > 0;
+                  const step3Done = !!runSummary;
+                  // Active = the first not-yet-done step
+                  const activeIdx =
+                    !step1Done ? 1 :
+                    !step2Done ? 2 :
+                    !step3Done ? 3 : 0;
+                  return (
+                    <>
+                      <WorkflowStep
+                        num={1}
+                        title="Quick clean"
+                        body="Run Auto-Fix to handle duplicates, missing values, and column names. You preview every change before committing."
+                        done={step1Done}
+                        active={activeIdx === 1}
+                      />
+                      <WorkflowStep
+                        num={2}
+                        title="Column rules"
+                        body="Pick from plain-English presets per column — validate format, transform values, check length."
+                        done={step2Done}
+                        active={activeIdx === 2}
+                      />
+                      <WorkflowStep
+                        num={3}
+                        title="Review & export"
+                        body="Run rules, inspect Cleaned vs. Rejected rows, then download the CSVs."
+                        done={step3Done}
+                        active={activeIdx === 3}
+                      />
+                    </>
+                  );
+                })()}
               </Stack>
             </Box>
             <Button size="small" onClick={dismissBanner}>Hide</Button>
@@ -1038,28 +1059,42 @@ interface WorkflowStepProps {
   title: string;
   body: string;
   active?: boolean;
+  done?: boolean;
 }
 
-function WorkflowStep({ num, title, body, active }: WorkflowStepProps) {
+function WorkflowStep({ num, title, body, active, done }: WorkflowStepProps) {
+  // Three visual states: done (green check), active (crimson), pending (grey)
+  const accent = done ? '#16a34a' : active ? '#b60003' : null;
   return (
     <Box sx={{
       flex: 1, p: 1.5, borderRadius: 1.5,
       border: '1px solid',
-      borderColor: active ? '#b60003' : 'divider',
-      bgcolor: active ? 'rgba(182, 0, 3, 0.04)' : 'transparent',
+      borderColor: accent ?? 'divider',
+      bgcolor: done ? 'rgba(22, 163, 74, 0.04)'
+        : active ? 'rgba(182, 0, 3, 0.04)'
+        : 'transparent',
       display: 'flex', gap: 1.5, alignItems: 'flex-start',
+      transition: 'all .2s',
     }}>
       <Box sx={{
         width: 24, height: 24, borderRadius: '50%',
-        bgcolor: active ? '#b60003' : 'action.disabledBackground',
-        color: active ? 'white' : 'text.secondary',
+        bgcolor: accent ?? 'action.disabledBackground',
+        color: accent ? 'white' : 'text.secondary',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontSize: '0.75rem', fontWeight: 700, flexShrink: 0,
       }}>
-        {num}
+        {done ? '✓' : num}
       </Box>
       <Box>
-        <Typography variant="caption" fontWeight={700} sx={{ display: 'block' }}>
+        <Typography
+          variant="caption"
+          fontWeight={700}
+          sx={{
+            display: 'block',
+            color: done ? '#16a34a' : 'inherit',
+            textDecoration: done ? 'none' : 'none',
+          }}
+        >
           {title}
         </Typography>
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', lineHeight: 1.4 }}>
