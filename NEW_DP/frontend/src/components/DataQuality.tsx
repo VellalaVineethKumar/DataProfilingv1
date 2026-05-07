@@ -28,13 +28,17 @@ import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
 
 import { useStore } from '../store';
+import { useToast } from '../hooks/useToast';
 import client from '../api/client';
 import RulePicker from './dataQuality/RulePicker';
 import AutoFixPreview, { type AutoFixPreviewData } from './dataQuality/AutoFixPreview';
 import { summarizeRule, ruleKind, KIND_META, type Rule } from './dataQuality/rulePresets';
 
+const BANNER_KEY = 'dq-banner-dismissed';
+
 export default function DataQuality() {
   const currentDataset = useStore((state) => state.dataset);
+  const toast = useToast();
   const [subTab, setSubTab] = useState(0);
 
   const [columns, setColumns] = useState<string[]>([]);
@@ -82,8 +86,14 @@ export default function DataQuality() {
   const [colNameStyle, setColNameStyle] = useState('snake_case');
   const [standardizingColNames, setStandardizingColNames] = useState(false);
 
-  // Workflow banner dismissal (session-scoped)
-  const [bannerDismissed, setBannerDismissed] = useState(false);
+  // Workflow banner dismissal — persisted across reloads
+  const [bannerDismissed, setBannerDismissed] = useState<boolean>(() => {
+    try { return localStorage.getItem(BANNER_KEY) === '1'; } catch { return false; }
+  });
+  const dismissBanner = () => {
+    setBannerDismissed(true);
+    try { localStorage.setItem(BANNER_KEY, '1'); } catch { /* ignore */ }
+  };
 
   useEffect(() => {
     if (currentDataset) {
@@ -147,9 +157,9 @@ export default function DataQuality() {
       setNewRuleSetName('');
       setSaveOpen(false);
       loadRuleSets();
-      alert('Template saved to library!');
+      toast.success('Template saved to library');
     } catch (err: any) {
-      alert('Failed to save template: ' + (err?.response?.data?.detail || err.message));
+      toast.error('Failed to save template: ' + (err?.response?.data?.detail || err.message));
     }
   };
 
@@ -157,9 +167,9 @@ export default function DataQuality() {
     try {
       const loaded = JSON.parse(rulesJson);
       setRulesConfig({ ...rulesConfig, ...loaded });
-      alert('Template applied successfully!');
+      toast.success('Template applied');
     } catch (err) {
-      alert('Failed to parse template rules.');
+      toast.error('Failed to parse template rules');
     }
   };
 
@@ -213,7 +223,7 @@ export default function DataQuality() {
       link.click();
       link.remove();
     } catch (err) {
-      alert('Failed to download file.');
+      toast.error('Failed to download file');
     }
   };
 
@@ -282,9 +292,9 @@ export default function DataQuality() {
         [aiCol]: [...(rulesConfig[aiCol] || []), newRule],
       });
       setAiPrompt('');
-      alert(`AI added rule: ${suggestion.explanation}`);
+      toast.success(`AI added rule: ${suggestion.explanation}`);
     } catch (err: any) {
-      alert('AI suggestion failed: ' + (err?.response?.data?.detail || err.message));
+      toast.error('AI suggestion failed: ' + (err?.response?.data?.detail || err.message));
     } finally {
       setAiSuggesting(false);
     }
@@ -292,7 +302,7 @@ export default function DataQuality() {
 
   const handleStandardize = async () => {
     if (standardizeCols.length === 0) {
-      alert('Please select at least one column');
+      toast.warning('Please select at least one column');
       return;
     }
     try {
@@ -302,10 +312,10 @@ export default function DataQuality() {
       }, {
         params: { case: standardizeCase, style: standardizeStyle },
       });
-      alert(res.data.message);
+      toast.success(res.data.message);
       loadColumns();
     } catch (err: any) {
-      alert('Standardization failed: ' + (err?.response?.data?.detail || err.message));
+      toast.error('Standardization failed: ' + (err?.response?.data?.detail || err.message));
     } finally {
       setStandardizing(false);
     }
@@ -319,10 +329,10 @@ export default function DataQuality() {
         params: { case_type: colNameStyle },
       });
       const preview = res.data.columns.slice(0, 5).join(', ') + (res.data.columns.length > 5 ? '…' : '');
-      alert(`${res.data.message}\n\nNew names: ${preview}`);
+      toast.success(`${res.data.message} — new names: ${preview}`);
       window.location.reload();
     } catch (err: any) {
-      alert('Column rename failed: ' + (err?.response?.data?.detail || err.message));
+      toast.error('Column rename failed: ' + (err?.response?.data?.detail || err.message));
     } finally {
       setStandardizingColNames(false);
     }
@@ -391,7 +401,7 @@ export default function DataQuality() {
                 />
               </Stack>
             </Box>
-            <Button size="small" onClick={() => setBannerDismissed(true)}>Hide</Button>
+            <Button size="small" onClick={dismissBanner}>Hide</Button>
           </Box>
         </Paper>
       )}
@@ -507,8 +517,13 @@ export default function DataQuality() {
                       onClick={() => handleLoadRuleSet(lib.rules_json)}
                       onDelete={async () => {
                         if (window.confirm(`Delete ${lib.name}?`)) {
-                          await client.delete(`/rules/${lib.id}`);
-                          loadRuleSets();
+                          try {
+                            await client.delete(`/rules/${lib.id}`);
+                            loadRuleSets();
+                            toast.success(`Deleted "${lib.name}"`);
+                          } catch (err: any) {
+                            toast.error('Failed to delete template');
+                          }
                         }
                       }}
                     />

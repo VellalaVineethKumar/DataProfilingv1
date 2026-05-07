@@ -13,8 +13,6 @@ import {
   ArrowForward as ArrowForwardIcon,
   FolderSpecial as FolderSpecialIcon,
   CreateNewFolder as CreateNewFolderIcon,
-  InsertDriveFile as FileIcon,
-  TableChart as TableChartIcon,
   Info as InfoIcon,
 } from '@mui/icons-material';
 import { styled } from '@mui/material/styles';
