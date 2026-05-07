@@ -1,8 +1,16 @@
+// frontend/src/components/DataQuality.tsx
+//
+// Data Quality redesign:
+//   1. Plain-English rule presets (no raw regex required for BAs / DQ analysts).
+//   2. Auto-Fix is preview-then-approve — never writes to source without review.
+//   3. Guided 1 → 2 → 3 workflow banner at the top.
+//   4. All three operations survive: validation (flag), transformation (modify), rejection (quarantine).
+
 import { useState, useEffect } from 'react';
 import {
   Box, Button, Typography, Paper, Accordion, AccordionSummary, AccordionDetails,
   Select, MenuItem, FormControl, InputLabel, TextField, IconButton, Alert, CircularProgress,
-  Divider, Tabs, Tab, Card, CardContent, Grid, Chip
+  Divider, Tabs, Tab, Card, CardContent, Grid, Chip, Stack,
 } from '@mui/material';
 import { DataGrid } from '@mui/x-data-grid';
 import type { GridColDef } from '@mui/x-data-grid';
@@ -21,17 +29,9 @@ import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
 
 import { useStore } from '../store';
 import client from '../api/client';
-
-interface Rule {
-  mode: string;
-  pattern: string;
-  replace: string;
-  case: string;
-  length_mode: string;
-  min_length: number;
-  max_length: number;
-  exact_length: number;
-}
+import RulePicker from './dataQuality/RulePicker';
+import AutoFixPreview, { type AutoFixPreviewData } from './dataQuality/AutoFixPreview';
+import { summarizeRule, ruleKind, KIND_META, type Rule } from './dataQuality/rulePresets';
 
 export default function DataQuality() {
   const currentDataset = useStore((state) => state.dataset);
@@ -46,6 +46,10 @@ export default function DataQuality() {
   const [running, setRunning] = useState(false);
   const [runSummary, setRunSummary] = useState<any>(null);
 
+  // Rule picker dialog
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerColumn, setPickerColumn] = useState<string>('');
+
   // AI Suggestion state
   const [aiCol, setAiCol] = useState('');
   const [aiPrompt, setAiPrompt] = useState('');
@@ -54,13 +58,19 @@ export default function DataQuality() {
   // Preview state
   const [previewTab, setPreviewTab] = useState(0);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [previewData, setPreviewData] = useState<{columns: string[], rows: any[]}>({columns: [], rows: []});
+  const [previewData, setPreviewData] = useState<{ columns: string[]; rows: any[] }>({ columns: [], rows: [] });
 
   // Rule Library state
   const [ruleSets, setRuleSets] = useState<any[]>([]);
   const [saveOpen, setSaveOpen] = useState(false);
   const [newRuleSetName, setNewRuleSetName] = useState('');
-  const [autoFixing, setAutoFixing] = useState(false);
+
+  // Auto-Fix preview/apply
+  const [autoFixOpen, setAutoFixOpen] = useState(false);
+  const [autoFixLoading, setAutoFixLoading] = useState(false);
+  const [autoFixApplying, setAutoFixApplying] = useState(false);
+  const [autoFixData, setAutoFixData] = useState<AutoFixPreviewData | null>(null);
+  const [autoFixOps, setAutoFixOps] = useState<string[]>([]);
 
   // Standardization state
   const [standardizeCols, setStandardizeCols] = useState<string[]>([]);
@@ -71,6 +81,9 @@ export default function DataQuality() {
   // Column name standardization
   const [colNameStyle, setColNameStyle] = useState('snake_case');
   const [standardizingColNames, setStandardizingColNames] = useState(false);
+
+  // Workflow banner dismissal (session-scoped)
+  const [bannerDismissed, setBannerDismissed] = useState(false);
 
   useEffect(() => {
     if (currentDataset) {
@@ -93,9 +106,7 @@ export default function DataQuality() {
       setSamples(res.data.samples);
 
       const initialConfig: Record<string, Rule[]> = {};
-      res.data.columns.forEach((c: string) => {
-        initialConfig[c] = [];
-      });
+      res.data.columns.forEach((c: string) => { initialConfig[c] = []; });
       setRulesConfig(initialConfig);
     } catch (err: any) {
       setError('Failed to load columns for quality evaluation.');
@@ -131,7 +142,7 @@ export default function DataQuality() {
     try {
       await client.post('/rules/save', {
         name: newRuleSetName,
-        rules_json: JSON.stringify(rulesConfig)
+        rules_json: JSON.stringify(rulesConfig),
       });
       setNewRuleSetName('');
       setSaveOpen(false);
@@ -145,7 +156,6 @@ export default function DataQuality() {
   const handleLoadRuleSet = (rulesJson: string) => {
     try {
       const loaded = JSON.parse(rulesJson);
-      // Merge logic - prioritize loaded rules
       setRulesConfig({ ...rulesConfig, ...loaded });
       alert('Template applied successfully!');
     } catch (err) {
@@ -153,18 +163,39 @@ export default function DataQuality() {
     }
   };
 
-  const handleAutoFix = async () => {
-    if (!currentDataset || !window.confirm("Auto-Fix will modify the dataset file directly (standardizing names, trimming, and filling missing values). Proceed?")) return;
+  // ---------------------------------------------------------------------------
+  // Auto-Fix: preview-then-apply
+  // ---------------------------------------------------------------------------
+
+  const openAutoFixPreview = async () => {
+    if (!currentDataset) return;
+    setAutoFixOpen(true);
+    setAutoFixData(null);
+    setAutoFixOps([]);
+    setAutoFixLoading(true);
     try {
-      setAutoFixing(true);
-      const res = await client.post(`/quality/auto-fix/${currentDataset.id}`);
-      alert(res.data.message + "\n\nActions:\n- " + res.data.operations.join("\n- "));
-      // Reload everything since columns might have changed names
-      window.location.reload(); 
+      const res = await client.post(`/quality/auto-fix/${currentDataset.id}?dry_run=true`);
+      setAutoFixData(res.data.preview);
+      setAutoFixOps(res.data.operations || []);
     } catch (err: any) {
-      alert('Auto-fix failed: ' + (err?.response?.data?.detail || err.message));
+      setError('Auto-fix preview failed: ' + (err?.response?.data?.detail || err.message));
+      setAutoFixOpen(false);
     } finally {
-      setAutoFixing(false);
+      setAutoFixLoading(false);
+    }
+  };
+
+  const applyAutoFix = async () => {
+    if (!currentDataset) return;
+    try {
+      setAutoFixApplying(true);
+      await client.post(`/quality/auto-fix/${currentDataset.id}?dry_run=false`);
+      // Reload — column names may have changed
+      window.location.reload();
+    } catch (err: any) {
+      setError('Auto-fix failed: ' + (err?.response?.data?.detail || err.message));
+    } finally {
+      setAutoFixApplying(false);
     }
   };
 
@@ -172,7 +203,7 @@ export default function DataQuality() {
     if (!currentDataset) return;
     try {
       const res = await client.get(`/quality/download/${currentDataset.id}?type=${type}`, {
-        responseType: 'blob'
+        responseType: 'blob',
       });
       const url = window.URL.createObjectURL(new Blob([res.data]));
       const link = document.createElement('a');
@@ -186,33 +217,26 @@ export default function DataQuality() {
     }
   };
 
-  const addRule = (colName: string) => {
-    const newRule: Rule = {
-      mode: 'Clean', pattern: '', replace: '', case: 'UPPERCASE',
-      length_mode: 'Exact', min_length: 0, max_length: 50, exact_length: 10
-    };
-    setRulesConfig({
-      ...rulesConfig,
-      [colName]: [...rulesConfig[colName], newRule]
-    });
+  // ---------------------------------------------------------------------------
+  // Rule mutations
+  // ---------------------------------------------------------------------------
+
+  const openRulePicker = (col: string) => {
+    setPickerColumn(col);
+    setPickerOpen(true);
   };
 
-  const updateRule = (colName: string, ruleIndex: number, field: keyof Rule, value: any) => {
-    const colRules = [...rulesConfig[colName]];
-    colRules[ruleIndex] = { ...colRules[ruleIndex], [field]: value };
+  const handlePickerAdd = (rule: Rule) => {
     setRulesConfig({
       ...rulesConfig,
-      [colName]: colRules
+      [pickerColumn]: [...(rulesConfig[pickerColumn] || []), rule],
     });
   };
 
   const deleteRule = (colName: string, ruleIndex: number) => {
     const colRules = [...rulesConfig[colName]];
     colRules.splice(ruleIndex, 1);
-    setRulesConfig({
-      ...rulesConfig,
-      [colName]: colRules
-    });
+    setRulesConfig({ ...rulesConfig, [colName]: colRules });
   };
 
   const runQuality = async () => {
@@ -221,10 +245,10 @@ export default function DataQuality() {
       setError('');
       setRunSummary(null);
       const res = await client.post(`/quality/run/${currentDataset?.id}`, {
-        rules: rulesConfig
+        rules: rulesConfig,
       });
       setRunSummary(res.data);
-      setSubTab(1); // Auto-switch to results
+      setSubTab(2); // Auto-switch to Results
     } catch (err: any) {
       setError(err?.response?.data?.detail || 'Data quality execution failed.');
     } finally {
@@ -238,9 +262,9 @@ export default function DataQuality() {
       setAiSuggesting(true);
       const res = await client.post(`/quality/ai-suggest/${currentDataset?.id}`, {
         column: aiCol,
-        prompt: aiPrompt
+        prompt: aiPrompt,
       });
-      
+
       const suggestion = res.data;
       const newRule: Rule = {
         mode: suggestion.mode,
@@ -250,12 +274,12 @@ export default function DataQuality() {
         length_mode: suggestion.length_mode || 'Exact',
         min_length: suggestion.min_length || 0,
         max_length: suggestion.max_length || 50,
-        exact_length: suggestion.exact_length || 10
+        exact_length: suggestion.exact_length || 10,
       };
-      
+
       setRulesConfig({
         ...rulesConfig,
-        [aiCol]: [...(rulesConfig[aiCol] || []), newRule]
+        [aiCol]: [...(rulesConfig[aiCol] || []), newRule],
       });
       setAiPrompt('');
       alert(`AI added rule: ${suggestion.explanation}`);
@@ -268,7 +292,7 @@ export default function DataQuality() {
 
   const handleStandardize = async () => {
     if (standardizeCols.length === 0) {
-      alert("Please select at least one column");
+      alert('Please select at least one column');
       return;
     }
     try {
@@ -276,10 +300,7 @@ export default function DataQuality() {
       const res = await client.post(`/quality/standardize-text/${currentDataset?.id}`, {
         columns: standardizeCols,
       }, {
-        params: {
-          case: standardizeCase,
-          style: standardizeStyle
-        }
+        params: { case: standardizeCase, style: standardizeStyle },
       });
       alert(res.data.message);
       loadColumns();
@@ -295,7 +316,7 @@ export default function DataQuality() {
     try {
       setStandardizingColNames(true);
       const res = await client.post(`/quality/standardize-columns/${currentDataset.id}`, null, {
-        params: { case_type: colNameStyle }
+        params: { case_type: colNameStyle },
       });
       const preview = res.data.columns.slice(0, 5).join(', ') + (res.data.columns.length > 5 ? '…' : '');
       alert(`${res.data.message}\n\nNew names: ${preview}`);
@@ -307,7 +328,7 @@ export default function DataQuality() {
     }
   };
 
-  const gridColumns: GridColDef[] = previewData.columns.map(col => ({
+  const gridColumns: GridColDef[] = previewData.columns.map((col) => ({
     field: col,
     headerName: col,
     width: 150,
@@ -315,6 +336,7 @@ export default function DataQuality() {
   }));
 
   const totalRulesCount = Object.values(rulesConfig).reduce((sum, rules) => sum + rules.length, 0);
+  const columnsWithRules = Object.values(rulesConfig).filter((rs) => rs.length > 0).length;
 
   if (!currentDataset) {
     return <Alert severity="info" sx={{ m: 4 }}>Please load a dataset first.</Alert>;
@@ -330,13 +352,57 @@ export default function DataQuality() {
 
   return (
     <Box sx={{ p: 4, maxWidth: 1200, mx: 'auto' }}>
+      {/* Guided workflow banner */}
+      {!bannerDismissed && (
+        <Paper
+          elevation={0}
+          sx={{
+            mb: 3, p: 2.5, borderRadius: 2,
+            border: '1px solid', borderColor: 'divider',
+            bgcolor: (theme) => theme.palette.mode === 'dark' ? '#1a1f2e' : '#fafafa',
+          }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2 }}>
+            <Box sx={{ flex: 1 }}>
+              <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 0.5 }}>
+                Recommended workflow
+              </Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+                You can use the tools in any order, but this is the fastest path from messy data to a clean export.
+              </Typography>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+                <WorkflowStep
+                  num={1}
+                  title="Quick clean"
+                  body="Run Auto-Fix to handle duplicates, missing values, and column names. You preview every change before committing."
+                  active={subTab === 0}
+                />
+                <WorkflowStep
+                  num={2}
+                  title="Column rules"
+                  body="Pick from plain-English presets per column — validate format, transform values, check length."
+                  active={subTab === 0 && totalRulesCount > 0}
+                />
+                <WorkflowStep
+                  num={3}
+                  title="Review & export"
+                  body="Run rules, inspect Cleaned vs. Rejected rows, then download the CSVs."
+                  active={subTab === 2}
+                />
+              </Stack>
+            </Box>
+            <Button size="small" onClick={() => setBannerDismissed(true)}>Hide</Button>
+          </Box>
+        </Paper>
+      )}
+
       {/* Sub-Tab Navigation */}
       <Paper elevation={1} sx={{ mb: 3 }}>
         <Tabs
           value={subTab}
           onChange={(_, v) => setSubTab(v)}
           variant="fullWidth"
-          sx={{ borderBottom: '1px solid #e0e0e0' }}
+          sx={{ borderBottom: '1px solid', borderColor: 'divider' }}
         >
           <Tab icon={<SettingsIcon />} label="Rule Configuration" iconPosition="start" />
           <Tab icon={<AutoFixHighIcon />} label="Standardization" iconPosition="start" />
@@ -349,7 +415,7 @@ export default function DataQuality() {
         </Tabs>
       </Paper>
 
-      {error && <Alert severity="error" sx={{ mb: 3 }}>{error}</Alert>}
+      {error && <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError('')}>{error}</Alert>}
 
       {/* ====== Sub-Tab 0: Rule Configuration ====== */}
       {subTab === 0 && (
@@ -358,7 +424,10 @@ export default function DataQuality() {
             Data Quality Rule Configuration
           </Typography>
           <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
-            Define transformation and validation rules per column, then execute to produce cleaned/rejected datasets.
+            Build rules from plain-English presets — no regex required. Each rule either{' '}
+            <Box component="span" sx={{ color: KIND_META.transform.color, fontWeight: 600 }}>transforms</Box>,{' '}
+            <Box component="span" sx={{ color: KIND_META.validate.color, fontWeight: 600 }}>validates</Box>, or{' '}
+            <Box component="span" sx={{ color: KIND_META.length.color, fontWeight: 600 }}>length-checks</Box> a column.
           </Typography>
 
           {/* Summary bar */}
@@ -376,6 +445,11 @@ export default function DataQuality() {
                 <CardContent sx={{ py: 1.5 }}>
                   <Typography variant="caption" color="text.secondary">Total Rules</Typography>
                   <Typography variant="h5" fontWeight="bold" color="primary">{totalRulesCount}</Typography>
+                  {columnsWithRules > 0 && (
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                      across {columnsWithRules} {columnsWithRules === 1 ? 'column' : 'columns'}
+                    </Typography>
+                  )}
                 </CardContent>
               </Card>
             </Grid>
@@ -391,10 +465,14 @@ export default function DataQuality() {
             </Grid>
           </Grid>
 
-          {/* Library & Quick Fix Utilities */}
+          {/* Library & Auto-Fix */}
           <Grid container spacing={3} sx={{ mb: 4 }}>
             <Grid item xs={12} md={7}>
-              <Box sx={{ p: 2, border: '1px solid #e2e8f0', borderRadius: 2, bgcolor: '#f8fafc' }}>
+              <Box sx={{
+                p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 2,
+                bgcolor: (theme) => theme.palette.mode === 'dark' ? '#1a1f2e' : '#f8fafc',
+                height: '100%',
+              }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', mb: 2, justifyContent: 'space-between' }}>
                   <Box sx={{ display: 'flex', alignItems: 'center' }}>
                     <BookmarkIcon sx={{ color: '#6366f1', mr: 1 }} />
@@ -404,76 +482,94 @@ export default function DataQuality() {
                     Save as Template
                   </Button>
                 </Box>
-                
+
                 {saveOpen && (
                   <Box sx={{ mb: 2, display: 'flex', gap: 1 }}>
-                    <TextField 
-                      size="small" fullWidth label="Template Name" 
-                      value={newRuleSetName} onChange={(e) => setNewRuleSetName(e.target.value)} 
+                    <TextField
+                      size="small" fullWidth label="Template Name"
+                      value={newRuleSetName} onChange={(e) => setNewRuleSetName(e.target.value)}
                     />
                     <Button variant="contained" size="small" onClick={handleSaveRuleSet}>Save</Button>
                   </Box>
                 )}
 
-                <Box sx={{ display: 'flex', gap: 1, overflowX: 'auto', pb: 1 }}>
-                  {ruleSets.length === 0 && <Typography variant="caption" color="text.disabled">No saved templates yet.</Typography>}
-                  {ruleSets.map(lib => (
-                    <Chip 
-                      key={lib.id} 
-                      label={lib.name} 
-                      variant="outlined" 
-                      clickable 
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                  {ruleSets.length === 0 && (
+                    <Typography variant="caption" color="text.disabled">No saved templates yet.</Typography>
+                  )}
+                  {ruleSets.map((lib) => (
+                    <Chip
+                      key={lib.id}
+                      label={lib.name}
+                      variant="outlined"
+                      clickable
                       icon={<CloudDownloadIcon />}
                       onClick={() => handleLoadRuleSet(lib.rules_json)}
                       onDelete={async () => {
-                         if(window.confirm(`Delete ${lib.name}?`)) {
-                           await client.delete(`/rules/${lib.id}`);
-                           loadRuleSets();
-                         }
+                        if (window.confirm(`Delete ${lib.name}?`)) {
+                          await client.delete(`/rules/${lib.id}`);
+                          loadRuleSets();
+                        }
                       }}
                     />
                   ))}
                 </Box>
               </Box>
             </Grid>
-            
+
             <Grid item xs={12} md={5}>
-              <Box sx={{ p: 2, border: '1px solid #fecaca', borderRadius: 2, bgcolor: '#fef2f2', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                <Typography variant="subtitle2" fontWeight="bold" color="#b60003" gutterBottom>
-                  Intelligent Auto-Fix
-                </Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ mb: 2 }}>
-                  One-click cleanup: Standardization, Deduplication, and Imputation.
-                </Typography>
+              <Box sx={{
+                p: 2, border: '1px solid #fecaca', borderRadius: 2, bgcolor: '#fef2f2',
+                height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+              }}>
+                <Box>
+                  <Typography variant="subtitle2" fontWeight="bold" color="#b60003" gutterBottom>
+                    Intelligent Auto-Fix
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+                    One-click cleanup of duplicates, missing values, whitespace and column names.
+                  </Typography>
+                  <Typography variant="caption" sx={{
+                    display: 'block', mb: 1.5, fontWeight: 600, color: '#7f1d1d',
+                  }}>
+                    You will review every change before it is written to the source data.
+                  </Typography>
+                </Box>
                 <Button
                   fullWidth variant="contained" startIcon={<AutoFixHighIcon />}
-                  onClick={handleAutoFix} disabled={autoFixing}
+                  onClick={openAutoFixPreview}
                   sx={{ bgcolor: '#b60003', '&:hover': { bgcolor: '#8f0002' } }}
                 >
-                  {autoFixing ? 'Fixing...' : 'Run Auto-Fix'}
+                  Preview Auto-Fix
                 </Button>
               </Box>
             </Grid>
           </Grid>
 
           {/* AI Helper Bar */}
-          <Box sx={{ p: 2, mb: 4, bgcolor: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 2 }}>
+          <Box sx={{
+            p: 2, mb: 4, border: '1px solid #bae6fd', borderRadius: 2,
+            bgcolor: (theme) => theme.palette.mode === 'dark' ? '#0c2030' : '#f0f9ff',
+          }}>
             <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
               <AutoAwesomeIcon sx={{ color: '#0284c7', mr: 1 }} />
               <Typography variant="subtitle2" color="#0369a1" fontWeight="bold">AI Rule Assistant</Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                — describe a rule in your own words and we'll add it.
+              </Typography>
             </Box>
             <Grid container spacing={2} alignItems="center">
               <Grid item xs={12} sm={3}>
                 <FormControl fullWidth size="small">
                   <InputLabel>Column</InputLabel>
                   <Select value={aiCol} label="Column" onChange={(e) => setAiCol(e.target.value)}>
-                    {columns.map(c => <MenuItem key={c} value={c}>{c}</MenuItem>)}
+                    {columns.map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}
                   </Select>
                 </FormControl>
               </Grid>
               <Grid item xs={12} sm={7}>
-                <TextField 
-                  fullWidth size="small" 
+                <TextField
+                  fullWidth size="small"
                   placeholder="e.g. 'Remove symbols', 'Format as Title Case', 'Check if valid email'"
                   value={aiPrompt}
                   onChange={(e) => setAiPrompt(e.target.value)}
@@ -481,7 +577,7 @@ export default function DataQuality() {
                 />
               </Grid>
               <Grid item xs={12} sm={2}>
-                <Button 
+                <Button
                   fullWidth variant="contained" color="info" size="small"
                   onClick={handleAiSuggest}
                   disabled={aiSuggesting || !aiCol || !aiPrompt}
@@ -492,80 +588,74 @@ export default function DataQuality() {
             </Grid>
           </Box>
 
-          <Box sx={{ maxHeight: '45vh', overflowY: 'auto', mb: 4, pr: 1 }}>
-            {columns.map(col => (
-              <Accordion key={col} sx={{ mb: 1, border: '1px solid #eee', boxShadow: 'none' }}>
-                <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', width: '100%' }}>
-                    <Typography sx={{ fontWeight: 600, width: '40%' }}>{col}</Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ width: '40%', fontStyle: 'italic' }}>
-                      Sample: {samples[col]?.slice(0, 2).join(', ')}...
-                    </Typography>
-                    <Typography sx={{ color: rulesConfig[col]?.length > 0 ? 'primary.main' : 'text.disabled', fontWeight: 'bold' }}>
-                      {rulesConfig[col]?.length || 0} Rules
-                    </Typography>
-                  </Box>
-                </AccordionSummary>
-                <AccordionDetails sx={{ bgcolor: 'grey.50' }}>
-                  {rulesConfig[col]?.map((rule, idx) => (
-                    <Box key={idx} sx={{
-                      display: 'flex', alignItems: 'center', gap: 2, mb: 1, p: 2,
-                      bgcolor: 'white', border: '1px solid #e0e0e0', borderRadius: 1
-                    }}>
-                      <FormControl size="small" sx={{ width: 140 }}>
-                        <InputLabel>Mode</InputLabel>
-                        <Select
-                          value={rule.mode}
-                          label="Mode"
-                          onChange={(e) => updateRule(col, idx, 'mode', e.target.value)}
-                        >
-                          <MenuItem value="Clean">Clean (Regex Remove)</MenuItem>
-                          <MenuItem value="Replace">Replace (Regex)</MenuItem>
-                          <MenuItem value="Extract">Extract (Regex)</MenuItem>
-                          <MenuItem value="Validate">Validate (Regex)</MenuItem>
-                          <MenuItem value="Case">Change Case</MenuItem>
-                          <MenuItem value="Length">Length Check</MenuItem>
-                        </Select>
-                      </FormControl>
-
-                      {['Clean', 'Replace', 'Extract', 'Validate'].includes(rule.mode) && (
-                        <TextField size="small" label="Pattern" value={rule.pattern} onChange={(e) => updateRule(col, idx, 'pattern', e.target.value)} placeholder="[0-9]+" />
-                      )}
-                      {rule.mode === 'Replace' && (
-                        <TextField size="small" label="To" value={rule.replace} onChange={(e) => updateRule(col, idx, 'replace', e.target.value)} />
-                      )}
-                      {rule.mode === 'Case' && (
-                        <Select size="small" value={rule.case} onChange={(e) => updateRule(col, idx, 'case', e.target.value)}>
-                          <MenuItem value="UPPERCASE">UPPERCASE</MenuItem>
-                          <MenuItem value="lowercase">lowercase</MenuItem>
-                          <MenuItem value="Title Case">Title Case</MenuItem>
-                        </Select>
-                      )}
-                      {rule.mode === 'Length' && (
-                        <>
-                          <Select size="small" value={rule.length_mode} onChange={(e) => updateRule(col, idx, 'length_mode', e.target.value)}>
-                            <MenuItem value="Exact">Exact</MenuItem>
-                            <MenuItem value="Minimum">Min</MenuItem>
-                            <MenuItem value="Maximum">Max</MenuItem>
-                            <MenuItem value="Range">Range</MenuItem>
-                          </Select>
-                          {rule.length_mode === 'Exact' && <TextField type="number" size="small" label="Len" value={rule.exact_length} onChange={(e) => updateRule(col, idx, 'exact_length', parseInt(e.target.value))} sx={{ width: 70 }}/>}
-                          {['Minimum', 'Range'].includes(rule.length_mode) && <TextField type="number" size="small" label="Min" value={rule.min_length} onChange={(e) => updateRule(col, idx, 'min_length', parseInt(e.target.value))} sx={{ width: 70 }}/>}
-                          {['Maximum', 'Range'].includes(rule.length_mode) && <TextField type="number" size="small" label="Max" value={rule.max_length} onChange={(e) => updateRule(col, idx, 'max_length', parseInt(e.target.value))} sx={{ width: 70 }}/>}
-                        </>
-                      )}
-
-                      <IconButton size="small" color="error" onClick={() => deleteRule(col, idx)}>
-                        <DeleteIcon fontSize="small" />
-                      </IconButton>
+          {/* Column accordions with friendly rule chips */}
+          <Box sx={{ maxHeight: '50vh', overflowY: 'auto', mb: 4, pr: 1 }}>
+            {columns.map((col) => {
+              const colRules = rulesConfig[col] || [];
+              return (
+                <Accordion key={col} sx={{ mb: 1, border: '1px solid', borderColor: 'divider', boxShadow: 'none' }}>
+                  <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', width: '100%', gap: 2 }}>
+                      <Typography sx={{ fontWeight: 600, minWidth: '30%' }}>{col}</Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{
+                        flex: 1, fontStyle: 'italic',
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}>
+                        Sample: {samples[col]?.slice(0, 2).join(', ')}…
+                      </Typography>
+                      <Typography sx={{
+                        color: colRules.length > 0 ? 'primary.main' : 'text.disabled',
+                        fontWeight: 'bold', whiteSpace: 'nowrap',
+                      }}>
+                        {colRules.length} {colRules.length === 1 ? 'Rule' : 'Rules'}
+                      </Typography>
                     </Box>
-                  ))}
-                  <Button startIcon={<AddIcon />} variant="text" size="small" onClick={() => addRule(col)}>
-                    Add Rule
-                  </Button>
-                </AccordionDetails>
-              </Accordion>
-            ))}
+                  </AccordionSummary>
+                  <AccordionDetails sx={{ bgcolor: 'action.hover', pt: 2 }}>
+                    {colRules.length === 0 && (
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+                        No rules yet. Add one to validate, transform, or check the length of values in this column.
+                      </Typography>
+                    )}
+                    {colRules.map((rule, idx) => {
+                      const kind = ruleKind(rule);
+                      const km = KIND_META[kind];
+                      return (
+                        <Box key={idx} sx={{
+                          display: 'flex', alignItems: 'center', gap: 2, mb: 1, p: 1.5,
+                          bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider',
+                          borderRadius: 1,
+                        }}>
+                          <Chip
+                            label={km.label}
+                            size="small"
+                            sx={{
+                              bgcolor: km.bg, color: km.color, fontWeight: 700,
+                              fontSize: '0.7rem', height: 22, minWidth: 80,
+                            }}
+                          />
+                          <Typography variant="body2" sx={{ flex: 1, fontWeight: 500 }}>
+                            {summarizeRule(rule)}
+                          </Typography>
+                          <IconButton size="small" color="error" onClick={() => deleteRule(col, idx)}>
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Box>
+                      );
+                    })}
+                    <Button
+                      startIcon={<AddIcon />}
+                      variant="outlined"
+                      size="small"
+                      onClick={() => openRulePicker(col)}
+                      sx={{ mt: 0.5 }}
+                    >
+                      Add Rule
+                    </Button>
+                  </AccordionDetails>
+                </Accordion>
+              );
+            })}
           </Box>
 
           <Button
@@ -599,23 +689,23 @@ export default function DataQuality() {
           <Grid container spacing={4}>
             <Grid item xs={12} md={6}>
               <Typography variant="subtitle2" fontWeight="bold" gutterBottom>Select Columns</Typography>
-              <Box sx={{ 
-                maxHeight: 300, overflowY: 'auto', p: 2, border: '1px solid #e2e8f0', 
-                borderRadius: 2, display: 'flex', flexWrap: 'wrap', gap: 1 
+              <Box sx={{
+                maxHeight: 300, overflowY: 'auto', p: 2, border: '1px solid', borderColor: 'divider',
+                borderRadius: 2, display: 'flex', flexWrap: 'wrap', gap: 1,
               }}>
-                {columns.map(col => (
-                  <Chip 
-                    key={col} 
-                    label={col} 
-                    color={standardizeCols.includes(col) ? "primary" : "default"}
+                {columns.map((col) => (
+                  <Chip
+                    key={col}
+                    label={col}
+                    color={standardizeCols.includes(col) ? 'primary' : 'default'}
                     onClick={() => {
                       if (standardizeCols.includes(col)) {
-                        setStandardizeCols(standardizeCols.filter(c => c !== col));
+                        setStandardizeCols(standardizeCols.filter((c) => c !== col));
                       } else {
                         setStandardizeCols([...standardizeCols, col]);
                       }
                     }}
-                    variant={standardizeCols.includes(col) ? "filled" : "outlined"}
+                    variant={standardizeCols.includes(col) ? 'filled' : 'outlined'}
                   />
                 ))}
               </Box>
@@ -735,14 +825,13 @@ export default function DataQuality() {
           {runSummary && (() => {
             const passed = runSummary.total_processed - runSummary.total_rejected;
             const failed = runSummary.total_rejected;
-            const warned = 0;
             return (
               <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap' }}>
                 {[
                   { label: 'Total Checks', value: runSummary.total_processed, color: '#6b7280', bg: '#f1f5f9' },
                   { label: 'Passed', value: passed, color: '#16a34a', bg: '#f0fdf4' },
                   { label: 'Failed', value: failed, color: '#dc2626', bg: '#fef2f2' },
-                  { label: 'Warnings', value: warned, color: '#d97706', bg: '#fffbeb' },
+                  { label: 'Warnings', value: 0, color: '#d97706', bg: '#fffbeb' },
                 ].map((kpi) => (
                   <Chip
                     key={kpi.label}
@@ -784,7 +873,12 @@ export default function DataQuality() {
 
           <Tabs value={previewTab} onChange={(_, val) => setPreviewTab(val)} sx={{ mb: 2 }}>
             <Tab icon={<VisibilityIcon />} label="Cleaned Data" iconPosition="start" />
-            <Tab icon={<VisibilityIcon />} label={`Rejected Data (${runSummary.total_rejected})`} iconPosition="start" disabled={runSummary.total_rejected === 0} />
+            <Tab
+              icon={<VisibilityIcon />}
+              label={`Rejected Data (${runSummary.total_rejected})`}
+              iconPosition="start"
+              disabled={runSummary.total_rejected === 0}
+            />
           </Tabs>
 
           <Box sx={{ height: 400, width: '100%', bgcolor: 'background.paper' }}>
@@ -798,15 +892,73 @@ export default function DataQuality() {
                 columns={gridColumns}
                 density="compact"
                 disableRowSelectionOnClick
-                initialState={{
-                  pagination: { paginationModel: { pageSize: 10 } },
-                }}
+                initialState={{ pagination: { paginationModel: { pageSize: 10 } } }}
                 pageSizeOptions={[10, 25, 50]}
               />
             )}
           </Box>
         </Paper>
       )}
+
+      {/* Rule picker dialog */}
+      <RulePicker
+        open={pickerOpen}
+        column={pickerColumn}
+        onClose={() => setPickerOpen(false)}
+        onAdd={handlePickerAdd}
+      />
+
+      {/* Auto-Fix preview-then-approve dialog */}
+      <AutoFixPreview
+        open={autoFixOpen}
+        loading={autoFixLoading}
+        applying={autoFixApplying}
+        preview={autoFixData}
+        operations={autoFixOps}
+        onClose={() => setAutoFixOpen(false)}
+        onApply={applyAutoFix}
+      />
+    </Box>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Workflow step pill (used in the banner)
+// ---------------------------------------------------------------------------
+
+interface WorkflowStepProps {
+  num: number;
+  title: string;
+  body: string;
+  active?: boolean;
+}
+
+function WorkflowStep({ num, title, body, active }: WorkflowStepProps) {
+  return (
+    <Box sx={{
+      flex: 1, p: 1.5, borderRadius: 1.5,
+      border: '1px solid',
+      borderColor: active ? '#b60003' : 'divider',
+      bgcolor: active ? 'rgba(182, 0, 3, 0.04)' : 'transparent',
+      display: 'flex', gap: 1.5, alignItems: 'flex-start',
+    }}>
+      <Box sx={{
+        width: 24, height: 24, borderRadius: '50%',
+        bgcolor: active ? '#b60003' : 'action.disabledBackground',
+        color: active ? 'white' : 'text.secondary',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: '0.75rem', fontWeight: 700, flexShrink: 0,
+      }}>
+        {num}
+      </Box>
+      <Box>
+        <Typography variant="caption" fontWeight={700} sx={{ display: 'block' }}>
+          {title}
+        </Typography>
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', lineHeight: 1.4 }}>
+          {body}
+        </Typography>
+      </Box>
     </Box>
   );
 }
