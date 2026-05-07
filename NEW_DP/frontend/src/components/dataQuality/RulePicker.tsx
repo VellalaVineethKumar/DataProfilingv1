@@ -138,7 +138,7 @@ export default function RulePicker({ open, column, onClose, onAdd }: RulePickerP
                   <Box
                     key={p.id}
                     onClick={() => handleSelect(p)}
-                    sx={{
+                    sx={(theme) => ({
                       p: 2,
                       border: '1px solid',
                       borderColor: 'divider',
@@ -147,10 +147,14 @@ export default function RulePicker({ open, column, onClose, onAdd }: RulePickerP
                       transition: 'all .15s',
                       '&:hover': {
                         borderColor: meta.color,
-                        bgcolor: meta.bg,
+                        // In dark mode the pastel backgrounds wash out badly — use a
+                        // tinted overlay derived from the kind color instead.
+                        bgcolor: theme.palette.mode === 'dark'
+                          ? `${meta.color}1f`   // ~12% alpha
+                          : meta.bg,
                         transform: 'translateY(-1px)',
                       },
-                    }}
+                    })}
                   >
                     <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 0.5 }}>
                       {p.label}
@@ -179,11 +183,14 @@ export default function RulePicker({ open, column, onClose, onAdd }: RulePickerP
         ) : (
           // Parameter form for the selected preset
           <Box sx={{ p: 3 }}>
-            <Box sx={{
-              p: 2, mb: 3, bgcolor: KIND_META[selected.kind].bg,
+            <Box sx={(theme) => ({
+              p: 2, mb: 3,
+              bgcolor: theme.palette.mode === 'dark'
+                ? `${KIND_META[selected.kind].color}1f`
+                : KIND_META[selected.kind].bg,
               border: '1px solid', borderColor: KIND_META[selected.kind].color + '33',
               borderRadius: 1.5,
-            }}>
+            })}>
               <Typography variant="body2" color="text.secondary">
                 {selected.description}
               </Typography>

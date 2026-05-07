@@ -38,6 +38,7 @@ const BANNER_KEY = 'dq-banner-dismissed';
 
 export default function DataQuality() {
   const currentDataset = useStore((state) => state.dataset);
+  const setDataset = useStore((state) => state.setDataset);
   const toast = useToast();
   const [subTab, setSubTab] = useState(0);
 
@@ -76,6 +77,10 @@ export default function DataQuality() {
   const [autoFixData, setAutoFixData] = useState<AutoFixPreviewData | null>(null);
   const [autoFixOps, setAutoFixOps] = useState<string[]>([]);
 
+  // Revert support — surfaces an Undo button when a .bak snapshot exists
+  const [snapshotAvailable, setSnapshotAvailable] = useState(false);
+  const [reverting, setReverting] = useState(false);
+
   // Standardization state
   const [standardizeCols, setStandardizeCols] = useState<string[]>([]);
   const [standardizeCase, setStandardizeCase] = useState('lower');
@@ -99,8 +104,19 @@ export default function DataQuality() {
     if (currentDataset) {
       loadColumns();
       loadRuleSets();
+      checkSnapshot();
     }
   }, [currentDataset]);
+
+  const checkSnapshot = async () => {
+    if (!currentDataset) return;
+    try {
+      const res = await client.get(`/quality/has-snapshot/${currentDataset.id}`);
+      setSnapshotAvailable(!!res.data?.available);
+    } catch {
+      setSnapshotAvailable(false);
+    }
+  };
 
   useEffect(() => {
     if (runSummary) {
@@ -199,13 +215,49 @@ export default function DataQuality() {
     if (!currentDataset) return;
     try {
       setAutoFixApplying(true);
-      await client.post(`/quality/auto-fix/${currentDataset.id}?dry_run=false`);
-      // Reload — column names may have changed
-      window.location.reload();
+      const res = await client.post(`/quality/auto-fix/${currentDataset.id}?dry_run=false`);
+      const newCols: string[] = res.data?.new_columns || [];
+
+      // Targeted refresh — no full page reload, preserve user's scroll/state
+      setDataset({
+        ...currentDataset,
+        columns: newCols,
+        col_count: newCols.length || currentDataset.col_count,
+      });
+      await loadColumns();
+      setRunSummary(null);   // any prior rule run is stale now
+      setSubTab(0);
+      setAutoFixOpen(false);
+      setSnapshotAvailable(true);
+      toast.success('Auto-fix applied. You can undo this from the toolbar.');
     } catch (err: any) {
       setError('Auto-fix failed: ' + (err?.response?.data?.detail || err.message));
     } finally {
       setAutoFixApplying(false);
+    }
+  };
+
+  const revertLastChange = async () => {
+    if (!currentDataset) return;
+    if (!window.confirm('Restore the dataset to before the last change?')) return;
+    try {
+      setReverting(true);
+      const res = await client.post(`/quality/revert/${currentDataset.id}`);
+      const newCols: string[] = res.data?.columns || [];
+      setDataset({
+        ...currentDataset,
+        columns: newCols,
+        col_count: newCols.length || currentDataset.col_count,
+        row_count: res.data?.rows ?? currentDataset.row_count,
+      });
+      await loadColumns();
+      setRunSummary(null);
+      setSnapshotAvailable(false);
+      toast.success('Reverted to previous snapshot');
+    } catch (err: any) {
+      toast.error('Revert failed: ' + (err?.response?.data?.detail || err.message));
+    } finally {
+      setReverting(false);
     }
   };
 
@@ -314,6 +366,7 @@ export default function DataQuality() {
       });
       toast.success(res.data.message);
       loadColumns();
+      setSnapshotAvailable(true);
     } catch (err: any) {
       toast.error('Standardization failed: ' + (err?.response?.data?.detail || err.message));
     } finally {
@@ -328,9 +381,18 @@ export default function DataQuality() {
       const res = await client.post(`/quality/standardize-columns/${currentDataset.id}`, null, {
         params: { case_type: colNameStyle },
       });
-      const preview = res.data.columns.slice(0, 5).join(', ') + (res.data.columns.length > 5 ? '…' : '');
+      const newCols: string[] = res.data?.columns || [];
+      const preview = newCols.slice(0, 5).join(', ') + (newCols.length > 5 ? '…' : '');
+      // Targeted refresh — keep tab/state, just refetch columns and update the store
+      setDataset({
+        ...currentDataset,
+        columns: newCols,
+        col_count: newCols.length || currentDataset.col_count,
+      });
+      await loadColumns();
+      setRunSummary(null);
+      setSnapshotAvailable(true);
       toast.success(`${res.data.message} — new names: ${preview}`);
-      window.location.reload();
     } catch (err: any) {
       toast.error('Column rename failed: ' + (err?.response?.data?.detail || err.message));
     } finally {
@@ -362,6 +424,33 @@ export default function DataQuality() {
 
   return (
     <Box sx={{ p: 4, maxWidth: 1200, mx: 'auto' }}>
+      {/* Revert / Undo last change — only shown when a .bak snapshot exists */}
+      {snapshotAvailable && (
+        <Box sx={{
+          mb: 2, p: 1.5, borderRadius: 1.5,
+          border: '1px solid #fde68a', bgcolor: '#fffbeb',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Box sx={{
+              width: 8, height: 8, borderRadius: '50%', bgcolor: '#d97706',
+            }} />
+            <Typography variant="body2" sx={{ color: '#92400e' }}>
+              The dataset was modified. A snapshot is available if you want to undo.
+            </Typography>
+          </Box>
+          <Button
+            size="small"
+            variant="outlined"
+            color="warning"
+            onClick={revertLastChange}
+            disabled={reverting}
+          >
+            {reverting ? 'Reverting…' : 'Undo last change'}
+          </Button>
+        </Box>
+      )}
+
       {/* Guided workflow banner */}
       {!bannerDismissed && (
         <Paper
@@ -644,10 +733,13 @@ export default function DataQuality() {
                           <Chip
                             label={km.label}
                             size="small"
-                            sx={{
-                              bgcolor: km.bg, color: km.color, fontWeight: 700,
+                            sx={(theme) => ({
+                              bgcolor: theme.palette.mode === 'dark' ? `${km.color}26` : km.bg,
+                              color: theme.palette.mode === 'dark' ? `${km.color}` : km.color,
+                              fontWeight: 700,
                               fontSize: '0.7rem', height: 22, minWidth: 80,
-                            }}
+                              border: theme.palette.mode === 'dark' ? `1px solid ${km.color}55` : 'none',
+                            })}
                           />
                           <Typography variant="body2" sx={{ flex: 1, fontWeight: 500 }}>
                             {summarizeRule(rule)}

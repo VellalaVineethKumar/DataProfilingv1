@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import shutil
 import logging
 import unicodedata
 from typing import List, Dict, Any, Optional
@@ -17,6 +18,25 @@ from core.ai_logic import generate_quality_rule_suggestion
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/quality", tags=["quality"])
+
+
+def _snapshot_source(filepath: str) -> Optional[str]:
+    """
+    Copy the source file to <filepath>.bak before a destructive overwrite.
+
+    Returns the snapshot path on success, None on failure (we never block the
+    write because of a snapshot failure — log + continue).
+    """
+    try:
+        if not os.path.exists(filepath):
+            return None
+        bak_path = filepath + ".bak"
+        shutil.copy2(filepath, bak_path)
+        logger.info("Created pre-write snapshot: %s", bak_path)
+        return bak_path
+    except Exception as e:
+        logger.warning("Failed to snapshot %s: %s", filepath, e)
+        return None
 
 @router.get("/columns/{dataset_id}")
 def get_columns_sample(
@@ -296,8 +316,9 @@ def standardize_column_names(
 
         new_columns = [to_case(c) for c in df.columns]
         df.columns = new_columns
+        _snapshot_source(dataset.filepath)
         df.to_csv(dataset.filepath, index=False)
-        
+
         # Update metadata
         dataset.columns_json = json.dumps(new_columns)
         db.commit()
@@ -344,6 +365,7 @@ def remove_outliers(
                 df = df[z_scores < 3]
         
         removed = before - len(df)
+        _snapshot_source(dataset.filepath)
         df.to_csv(dataset.filepath, index=False)
         return {"message": f"Removed {removed} outliers using {method}", "rows_removed": removed}
     except Exception as e:
@@ -467,7 +489,8 @@ def auto_fix_dataset(
                 "new_columns": new_cols,
             }
 
-        # Commit changes to disk
+        # Commit changes to disk — snapshot first so the user can revert
+        _snapshot_source(dataset.filepath)
         df.to_csv(dataset.filepath, index=False)
         dataset.columns_json = json.dumps(new_cols)
         db.commit()
@@ -481,6 +504,66 @@ def auto_fix_dataset(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/revert/{dataset_id}")
+def revert_last_change(
+    dataset_id: int,
+    db: Session = Depends(database.get_db),
+    current_user: db_models.User = Depends(auth.get_current_user)
+):
+    """
+    Restore the most recent .bak snapshot created before a destructive write
+    (auto-fix, standardize-text, standardize-columns, outlier removal).
+
+    The snapshot file is removed after a successful revert so subsequent
+    revert calls fail loudly rather than restoring stale state.
+    """
+    dataset = db.query(db_models.Dataset).filter(
+        db_models.Dataset.id == dataset_id,
+        db_models.Dataset.user_id == current_user.id
+    ).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    bak_path = dataset.filepath + ".bak"
+    if not os.path.exists(bak_path):
+        raise HTTPException(status_code=404, detail="No snapshot available to revert")
+
+    try:
+        shutil.copy2(bak_path, dataset.filepath)
+        os.remove(bak_path)
+
+        # Refresh metadata from the restored file
+        df = _load_file(dataset.filepath)
+        dataset.columns_json = json.dumps(df.columns.tolist())
+        db.commit()
+
+        return {
+            "message": "Reverted to previous snapshot",
+            "columns": df.columns.tolist(),
+            "rows": len(df),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Revert failed: {e}")
+
+
+@router.get("/has-snapshot/{dataset_id}")
+def has_snapshot(
+    dataset_id: int,
+    db: Session = Depends(database.get_db),
+    current_user: db_models.User = Depends(auth.get_current_user)
+):
+    """Tell the UI whether a revert snapshot is available for this dataset."""
+    dataset = db.query(db_models.Dataset).filter(
+        db_models.Dataset.id == dataset_id,
+        db_models.Dataset.user_id == current_user.id
+    ).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    bak_path = dataset.filepath + ".bak"
+    return {"available": os.path.exists(bak_path)}
+
 
 from utils.text_processing import AdvancedTitleCase
 from core.audit_log import log_action
@@ -519,8 +602,9 @@ def standardize_text(
             elif case == 'capitalize':
                 df[col] = df[col].astype(str).str.capitalize()
 
+        _snapshot_source(dataset.filepath)
         df.to_csv(dataset.filepath, index=False)
-        
+
         log_action(db, current_user.id, "STANDARDIZE", "DATASET", dataset.id, f"Standardized {len(columns)} columns to {case} ({style})")
         
         return {"message": f"Standardized {len(columns)} columns to {case}"}

@@ -110,9 +110,11 @@ export const RULE_PRESETS: RulePreset[] = [
     build: (p) => ({
       ...emptyRule(),
       mode: 'Replace',
-      // Escape regex special chars so the user's input is treated literally.
+      // Escape regex special chars in the search pattern so user input is literal.
       pattern: String(p?.find ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
-      replace: String(p?.replaceWith ?? ''),
+      // Escape backslashes in the replacement so Python's re.sub does NOT treat
+      // `\1` / `\g<1>` etc. as backreferences. Replacement is intended to be literal text.
+      replace: String(p?.replaceWith ?? '').replace(/\\/g, '\\\\'),
     }),
   },
 
