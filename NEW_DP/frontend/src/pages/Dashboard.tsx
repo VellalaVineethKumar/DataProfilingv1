@@ -85,11 +85,12 @@ export default function Dashboard() {
           onNavigateToLoad={() => setActiveTab(1)}
         />
 
-        <Box sx={{ flex: 1, overflowY: 'auto', bgcolor: 'background.default' }}>
-          <Box sx={{ maxWidth: 1280, mx: 'auto', p: 3 }}>
+        {/* Load Data (tab 1) gets the full canvas — no padding/maxWidth wrapper */}
+        {activeTab === 1 ? (
+          <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', bgcolor: 'background.default' }}>
             <Suspense
               fallback={
-                <Box sx={{ minHeight: 320, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <CircularProgress />
                 </Box>
               }
@@ -97,7 +98,21 @@ export default function Dashboard() {
               <ActiveTabComponent />
             </Suspense>
           </Box>
-        </Box>
+        ) : (
+          <Box sx={{ flex: 1, overflowY: 'auto', bgcolor: 'background.default' }}>
+            <Box sx={{ maxWidth: 1280, mx: 'auto', p: 3 }}>
+              <Suspense
+                fallback={
+                  <Box sx={{ minHeight: 320, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <CircularProgress />
+                  </Box>
+                }
+              >
+                <ActiveTabComponent />
+              </Suspense>
+            </Box>
+          </Box>
+        )}
       </Box>
     </Box>
   );
