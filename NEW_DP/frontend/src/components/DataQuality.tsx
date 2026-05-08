@@ -491,6 +491,8 @@ export default function DataQuality() {
                         body="Run Auto-Fix to handle duplicates, missing values, and column names. You preview every change before committing."
                         done={step1Done}
                         active={activeIdx === 1}
+                        onClick={openAutoFixPreview}
+                        actionLabel="Open Auto-Fix"
                       />
                       <WorkflowStep
                         num={2}
@@ -505,6 +507,8 @@ export default function DataQuality() {
                         body="Run rules, inspect Cleaned vs. Rejected rows, then download the CSVs."
                         done={step3Done}
                         active={activeIdx === 3}
+                        onClick={runSummary ? () => setSubTab(2) : undefined}
+                        actionLabel={runSummary ? 'Open results' : undefined}
                       />
                     </>
                   );
@@ -1060,22 +1064,34 @@ interface WorkflowStepProps {
   body: string;
   active?: boolean;
   done?: boolean;
+  onClick?: () => void;
+  actionLabel?: string;
 }
 
-function WorkflowStep({ num, title, body, active, done }: WorkflowStepProps) {
+function WorkflowStep({ num, title, body, active, done, onClick, actionLabel }: WorkflowStepProps) {
   // Three visual states: done (green check), active (crimson), pending (grey)
   const accent = done ? '#16a34a' : active ? '#b60003' : null;
+  const clickable = !!onClick;
   return (
-    <Box sx={{
-      flex: 1, p: 1.5, borderRadius: 1.5,
-      border: '1px solid',
-      borderColor: accent ?? 'divider',
-      bgcolor: done ? 'rgba(22, 163, 74, 0.04)'
-        : active ? 'rgba(182, 0, 3, 0.04)'
-        : 'transparent',
-      display: 'flex', gap: 1.5, alignItems: 'flex-start',
-      transition: 'all .2s',
-    }}>
+    <Box
+      onClick={onClick}
+      sx={{
+        flex: 1, p: 1.5, borderRadius: 1.5,
+        border: '1px solid',
+        borderColor: accent ?? 'divider',
+        bgcolor: done ? 'rgba(22, 163, 74, 0.04)'
+          : active ? 'rgba(182, 0, 3, 0.04)'
+          : 'transparent',
+        display: 'flex', gap: 1.5, alignItems: 'flex-start',
+        transition: 'all .2s',
+        cursor: clickable ? 'pointer' : 'default',
+        '&:hover': clickable ? {
+          borderColor: accent ?? '#94a3b8',
+          transform: 'translateY(-1px)',
+          boxShadow: '0 2px 6px rgba(0,0,0,0.06)',
+        } : {},
+      }}
+    >
       <Box sx={{
         width: 24, height: 24, borderRadius: '50%',
         bgcolor: accent ?? 'action.disabledBackground',
@@ -1085,21 +1101,31 @@ function WorkflowStep({ num, title, body, active, done }: WorkflowStepProps) {
       }}>
         {done ? '✓' : num}
       </Box>
-      <Box>
+      <Box sx={{ flex: 1 }}>
         <Typography
           variant="caption"
           fontWeight={700}
-          sx={{
-            display: 'block',
-            color: done ? '#16a34a' : 'inherit',
-            textDecoration: done ? 'none' : 'none',
-          }}
+          sx={{ display: 'block', color: done ? '#16a34a' : 'inherit' }}
         >
           {title}
         </Typography>
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', lineHeight: 1.4 }}>
           {body}
         </Typography>
+        {clickable && actionLabel && (
+          <Typography
+            variant="caption"
+            sx={{
+              display: 'inline-block', mt: 0.5,
+              color: accent ?? 'primary.main',
+              fontWeight: 600,
+              textDecoration: 'underline',
+              textUnderlineOffset: 2,
+            }}
+          >
+            {actionLabel} →
+          </Typography>
+        )}
       </Box>
     </Box>
   );

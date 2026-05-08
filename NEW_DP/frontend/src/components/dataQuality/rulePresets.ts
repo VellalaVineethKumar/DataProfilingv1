@@ -154,7 +154,9 @@ export const RULE_PRESETS: RulePreset[] = [
     label: 'Must not be empty',
     description: 'Flag any row where this column is blank or whitespace-only.',
     kind: 'validate',
-    build: () => ({ ...emptyRule(), mode: 'Validate', pattern: '^\\S+.*$' }),
+    // Anchored, but tolerates leading/trailing whitespace as long as some
+    // non-whitespace exists somewhere. "  abc  " passes; ""  and "   " fail.
+    build: () => ({ ...emptyRule(), mode: 'Validate', pattern: '^\\s*\\S+.*$' }),
   },
   {
     id: 'validate-numeric',
